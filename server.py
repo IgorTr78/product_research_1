@@ -13,7 +13,7 @@ from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
-PERPLEXITY_API_KEY = "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"
+PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 PERPLEXITY_URL     = "https://api.perplexity.ai/chat/completions"
 
 SYS = """Ты — эксперт по маркетинговым исследованиям. Отвечай на русском языке.
