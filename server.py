@@ -23,16 +23,37 @@ FONT_URLS = {
     "DejaVuSans":      "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf",
     "DejaVuSans-Bold": "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf",
 }
+SYSTEM_FONT_PATHS = {
+    "DejaVuSans":      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "DejaVuSans-Bold": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+}
 
 def ensure_fonts():
+    """Download fonts at startup. Called once via app startup hook."""
     os.makedirs(FONT_DIR, exist_ok=True)
     for name, url in FONT_URLS.items():
-        path = f"{FONT_DIR}/{name}.ttf"
-        if not os.path.exists(path):
-            try:
-                urllib.request.urlretrieve(url, path)
-            except Exception as e:
-                print(f"Font download failed ({name}): {e}")
+        dest = f"{FONT_DIR}/{name}.ttf"
+        if os.path.exists(dest):
+            continue
+        # Try system path first (saves bandwidth)
+        sys_path = SYSTEM_FONT_PATHS.get(name, "")
+        if os.path.exists(sys_path):
+            import shutil
+            shutil.copy2(sys_path, dest)
+            print(f"Font copied from system: {name}")
+            continue
+        # Download
+        try:
+            urllib.request.urlretrieve(url, dest)
+            print(f"Font downloaded: {name}")
+        except Exception as e:
+            print(f"Font download failed ({name}): {e}")
+
+# Pre-download fonts at module load time (runs once when Railway starts the app)
+try:
+    ensure_fonts()
+except Exception as _fe:
+    print(f"Startup font init failed: {_fe}")
 
 _fonts_registered = False
 
@@ -955,9 +976,12 @@ def clarify():
 @app.route("/export-excel", methods=["POST"])
 def export_excel():
     try:
-        import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-        from openpyxl.utils import get_column_letter
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            return jsonify({"error": "openpyxl не установлен. Добавьте openpyxl в requirements.txt"}), 500
 
         payload = request.json
         results = payload.get("results", [])
