@@ -34,21 +34,49 @@ def ensure_fonts():
             except Exception as e:
                 print(f"Font download failed ({name}): {e}")
 
+_fonts_registered = False
+
 def register_pdf_fonts():
+    global _fonts_registered
+    if _fonts_registered:
+        return
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    ensure_fonts()
+    # Candidates: local fonts/ dir in repo, /tmp download, system
     pairs = {
-        "DejaVuSans":      [f"{FONT_DIR}/DejaVuSans.ttf",
-                            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
-        "DejaVuSans-Bold": [f"{FONT_DIR}/DejaVuSans-Bold.ttf",
-                            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"],
+        "DejaVuSans": [
+            os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf"),
+            f"{FONT_DIR}/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ],
+        "DejaVuSans-Bold": [
+            os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans-Bold.ttf"),
+            f"{FONT_DIR}/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ],
     }
     for name, paths in pairs.items():
         for p in paths:
             if os.path.exists(p):
-                pdfmetrics.registerFont(TTFont(name, p))
-                break
+                try:
+                    pdfmetrics.registerFont(TTFont(name, p))
+                    break
+                except Exception:
+                    continue
+    # If Bold not available, alias it to regular so PDF doesn't crash
+    try:
+        from reportlab.pdfbase.pdfmetrics import getFont
+        getFont("DejaVuSans-Bold")
+    except Exception:
+        try:
+            from reportlab.pdfbase.pdfmetrics import getFont
+            getFont("DejaVuSans")
+            pdfmetrics.registerFontFamily("DejaVuSans",
+                normal="DejaVuSans", bold="DejaVuSans",
+                italic="DejaVuSans", boldItalic="DejaVuSans")
+        except Exception:
+            pass
+    _fonts_registered = True
 
 SYS = """Ты — эксперт по маркетинговым исследованиям. Отвечай на русском языке.
 Для российских рынков используй рубли (руб. млрд), для остальных — доллары ($B).
@@ -120,19 +148,24 @@ input::placeholder{color:#c0c4cc}
 .result-body.hidden{display:none}
 
 /* Structured data inside result */
-.data-table{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
-.data-table th{background:#1D9E75;color:#fff;padding:8px 10px;text-align:left;font-weight:600}
-.data-table td{padding:7px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top}
+.data-table{width:100%;border-collapse:collapse;margin:14px 0;font-size:12.5px;box-shadow:0 1px 4px rgba(0,0,0,.06);border-radius:8px;overflow:hidden}
+.data-table th{background:#1D9E75;color:#fff;padding:10px 12px;text-align:left;font-weight:600;white-space:nowrap;font-size:12px}
+.data-table td{padding:9px 12px;border-bottom:1px solid #eef0f4;vertical-align:top;line-height:1.5}
+.data-table tr:last-child td{border-bottom:none}
 .data-table tr:nth-child(even) td{background:#f8fafc}
 .data-table tr:hover td{background:#f0fdf8}
 .share-bar{height:8px;border-radius:4px;background:#1D9E75;opacity:.8;min-width:4px;display:inline-block;vertical-align:middle;margin-right:6px}
-.freq-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700}
+.freq-badge{display:inline-block;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:700}
 .freq-High{background:#fef3c7;color:#92400e}
 .freq-Medium{background:#e0f2fe;color:#075985}
 .freq-Low{background:#f0fdf4;color:#166534}
 .chart-wrap{margin:14px 0;border-radius:10px;overflow:hidden;border:1px solid #e4e8ee}
 .chart-wrap img{width:100%;display:block}
-.plain-text{white-space:pre-wrap;word-break:break-word;margin-top:10px;padding-top:10px;border-top:1px solid #f0f0f0;color:#444;font-size:13px;line-height:1.8}
+.plain-text{white-space:pre-wrap;word-break:break-word;margin-top:12px;padding-top:12px;border-top:1px solid #f0f0f0;color:#333;font-size:13px;line-height:1.85}
+.excel-link{display:inline-flex;align-items:center;gap:6px;margin-top:10px;padding:7px 14px;background:#f0fdf4;border:1px solid #1D9E75;border-radius:8px;color:#0a6b4d;font-size:12px;font-weight:600;cursor:pointer;text-decoration:none}
+.excel-link:hover{background:#1D9E75;color:#fff}
+.btn-new-report{flex:1;padding:11px 14px;border:none;border-radius:9px;background:linear-gradient(135deg,#f97316,#ea6b0a);color:#fff;font-size:13px;font-weight:700;cursor:pointer;transition:opacity .15s;display:flex;align-items:center;justify-content:center;gap:7px}
+.btn-new-report:hover{opacity:.9}
 
 /* Export */
 .export-bar{display:flex;gap:10px;margin:4px 0 20px}
@@ -245,6 +278,14 @@ input::placeholder{color:#c0c4cc}
       <button class="btn-export" id="btnWord" onclick="exportFile('word')">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
         Скачать Word
+      </button>
+      <button class="btn-export" id="btnExcel" onclick="exportFile('excel')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        Скачать Excel
+      </button>
+      <button class="btn-new-report" onclick="location.reload()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/></svg>
+        Новый отчёт
       </button>
     </div>
   </div>
@@ -576,37 +617,57 @@ function escHtml(t) {
 // Competitors table
 function renderCompetitorsTable(data) {
   if (!data || !data.length) return '';
-  const maxShare = Math.max(...data.map(r=>r.share||0));
+  const maxShare = Math.max(...data.map(r=>parseFloat(r.share)||0));
   let rows = data.map(r => {
-    const barW = maxShare > 0 ? Math.round((r.share/maxShare)*120) : 0;
+    const share = parseFloat(r.share)||0;
+    const barW  = maxShare > 0 ? Math.round((share/maxShare)*80) : 0;
+    const pct   = share > 0 ? share+'%' : (r.share||'—');
     return `<tr>
-      <td style="font-weight:600;color:#555">${r.rank}</td>
-      <td style="font-weight:700">${escHtml(r.company||'')}</td>
-      <td><span class="share-bar" style="width:${barW}px"></span>${r.share}%</td>
-      <td>${escHtml(r.segment||'')}</td>
-      <td>${escHtml(r.region||'')}</td>
-      <td style="color:#555;font-size:11px">${escHtml(r.note||'')}</td>
+      <td style="font-weight:700;color:#1D9E75;text-align:center;width:36px">${r.rank}</td>
+      <td style="font-weight:700;color:#111;min-width:140px">${escHtml(r.company||'')}</td>
+      <td style="min-width:110px"><div style="display:flex;align-items:center;gap:6px">
+        <div style="width:${barW}px;height:8px;background:#1D9E75;border-radius:4px;opacity:.8;flex-shrink:0;min-width:4px"></div>
+        <span style="font-weight:600;white-space:nowrap">${pct}</span></div></td>
+      <td style="color:#444">${escHtml(r.segment||'')}</td>
+      <td style="color:#444;white-space:nowrap">${escHtml(r.region||'')}</td>
+      <td style="color:#555;font-size:12px;line-height:1.55">${escHtml(r.note||'')}</td>
     </tr>`;
   }).join('');
-  return `<table class="data-table">
-    <thead><tr><th>#</th><th>Компания</th><th>Доля рынка</th><th>Сегмент</th><th>Регион</th><th>Преимущество</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+  return `<div>
+    <div style="overflow-x:auto">
+      <table class="data-table" style="min-width:680px">
+        <thead><tr><th>#</th><th>Компания</th><th>Доля рынка</th><th>Сегмент</th><th>Регион</th><th>Ключевое преимущество</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <button class="excel-link" onclick="exportFile('excel')">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+      Скачать таблицу (Полная версия в Excel)
+    </button>
+  </div>`;
 }
 
 // Problems table
 function renderProblemsTable(data) {
   if (!data || !data.length) return '';
   let rows = data.map(p => `<tr>
-    <td style="font-weight:600;color:#1D9E75">${escHtml(p.category||'')}</td>
-    <td style="font-weight:600">${escHtml(p.title||'')}</td>
-    <td style="font-size:12px">${escHtml(p.description||'')}</td>
-    <td><span class="freq-badge freq-${p.frequency}">${p.frequency}</span></td>
+    <td style="font-weight:700;color:#1D9E75;white-space:nowrap;min-width:100px">${escHtml(p.category||'')}</td>
+    <td style="font-weight:600;color:#111;min-width:120px">${escHtml(p.title||'')}</td>
+    <td style="color:#444;font-size:13px;line-height:1.6">${escHtml(p.description||'')}</td>
+    <td style="text-align:center;white-space:nowrap"><span class="freq-badge freq-${p.frequency}">${p.frequency}</span></td>
   </tr>`).join('');
-  return `<table class="data-table">
-    <thead><tr><th>Категория</th><th>Проблема</th><th>Описание</th><th>Частота</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+  return `<div>
+    <div style="overflow-x:auto">
+      <table class="data-table" style="min-width:600px">
+        <thead><tr><th>Категория</th><th>Проблема</th><th>Описание</th><th>Частота</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <button class="excel-link" onclick="exportFile('excel')">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+      Скачать таблицу (Полная версия в Excel)
+    </button>
+  </div>`;
 }
 
 // Growth chart using Canvas
@@ -715,9 +776,10 @@ function drawGrowthChart(id, g) {
 
 // ── Export ─────────────────────────────────────────────────────────────────
 async function exportFile(type) {
-  const btn = document.getElementById(type==='pdf'?'btnPdf':'btnWord');
-  const orig = btn.innerHTML;
-  btn.disabled=true; btn.innerHTML='<span>⏳ Генерирую...</span>';
+  const btnId = type==='pdf'?'btnPdf': type==='word'?'btnWord':'btnExcel';
+  const btn = document.getElementById(btnId);
+  const orig = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled=true; btn.innerHTML='<span>⏳ Генерирую...</span>'; }
 
   // Capture chart as base64 if exists
   const chartCanvas = document.querySelector('canvas[id^="chart_"]');
@@ -737,7 +799,7 @@ async function exportFile(type) {
     a.download=`market_research_${safe}.${type==='pdf'?'pdf':'docx'}`;
     a.click(); URL.revokeObjectURL(url);
   } catch(e) { alert('Ошибка экспорта: '+e.message); }
-  finally { btn.disabled=false; btn.innerHTML=orig; }
+  finally { if(btn){ btn.disabled=false; btn.innerHTML=orig; } }
 }
 </script>
 </body>
@@ -812,7 +874,10 @@ def clarify():
 Вопросы должны быть конкретными и релевантными именно этому рынку.
 Максимум 3 вопроса. Если рынок очень понятный — можно 1-2.
 Примеры тем: целевой сегмент клиентов, стадия развития продукта,
-главный конкурентный фокус, приоритет географии."""
+главный конкурентный фокус, приоритет географии.
+
+ВАЖНО: если задаёшь вопрос о регионе/географии — первым вариантом ВСЕГДА ставь
+"Все регионы / вся страна", затем конкретные регионы."""
 
     prompt = f"Рынок для исследования: {context}\n\nСгенерируй уточняющие вопросы."
     try:
@@ -829,6 +894,154 @@ def clarify():
 # ---------------------------------------------------------------------------
 # PDF export
 # ---------------------------------------------------------------------------
+
+@app.route("/export-excel", methods=["POST"])
+def export_excel():
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        payload = request.json
+        results = payload.get("results", [])
+        meta    = payload.get("meta", {})
+        market  = meta.get("market", "Исследование рынка")
+        geo     = meta.get("geo", "")
+        year    = meta.get("year", "")
+
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+
+        GREEN_FILL = PatternFill("solid", fgColor="1D9E75")
+        ALT_FILL   = PatternFill("solid", fgColor="F4F6F9")
+        H_FONT     = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
+        B_FONT     = Font(name="Calibri", bold=True, size=10)
+        N_FONT     = Font(name="Calibri", size=10)
+        BORDER     = Border(
+            left=Side(style="thin", color="D0D5DD"),
+            right=Side(style="thin", color="D0D5DD"),
+            top=Side(style="thin", color="D0D5DD"),
+            bottom=Side(style="thin", color="D0D5DD"),
+        )
+
+        def style_header(ws, cols):
+            for c in range(1, cols+1):
+                cell = ws.cell(row=1, column=c)
+                cell.font = H_FONT
+                cell.fill = GREEN_FILL
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = BORDER
+            ws.row_dimensions[1].height = 28
+
+        def style_row(ws, row_idx, cols, alt=False):
+            for c in range(1, cols+1):
+                cell = ws.cell(row=row_idx, column=c)
+                cell.font = N_FONT
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                cell.border = BORDER
+                if alt:
+                    cell.fill = ALT_FILL
+
+        # ── Summary sheet
+        ws0 = wb.create_sheet("Сводка")
+        ws0.column_dimensions["A"].width = 22
+        ws0.column_dimensions["B"].width = 40
+        ws0["A1"] = "Market Research Report"
+        ws0["A1"].font = Font(name="Calibri", bold=True, size=14, color="1D9E75")
+        ws0.merge_cells("A1:B1")
+        for i, (k, v) in enumerate([("Рынок", market), ("География", geo),
+                                      ("Прогноз до", year),
+                                      ("Дата", datetime.now().strftime("%d.%m.%Y"))], 2):
+            ws0.cell(row=i, column=1, value=k).font = B_FONT
+            ws0.cell(row=i, column=2, value=v).font = N_FONT
+
+        # ── Find structured data in results
+        for section in results:
+            structured = section.get("structured")
+            if not structured:
+                continue
+            stype = structured.get("type")
+
+            if stype == "competitors" and structured.get("data"):
+                ws = wb.create_sheet("Топ игроки")
+                headers = ["#", "Компания", "Доля рынка %", "Сегмент", "Регион", "Ключевое преимущество"]
+                for ci, h in enumerate(headers, 1):
+                    ws.cell(row=1, column=ci, value=h)
+                style_header(ws, len(headers))
+                for ri, r in enumerate(structured["data"], 2):
+                    vals = [r.get("rank",""), r.get("company",""), r.get("share",""),
+                            r.get("segment",""), r.get("region",""), r.get("note","")]
+                    for ci, v in enumerate(vals, 1):
+                        ws.cell(row=ri, column=ci, value=v)
+                    style_row(ws, ri, len(headers), alt=(ri%2==0))
+                ws.column_dimensions["A"].width = 5
+                ws.column_dimensions["B"].width = 28
+                ws.column_dimensions["C"].width = 12
+                ws.column_dimensions["D"].width = 20
+                ws.column_dimensions["E"].width = 18
+                ws.column_dimensions["F"].width = 45
+                ws.freeze_panes = "A2"
+
+            elif stype == "growth":
+                ws = wb.create_sheet("Прогноз роста")
+                sc        = structured.get("scenarios", {})
+                base_size = structured.get("baseSize", 0)
+                base_year = structured.get("baseYear", 2024)
+                tgt_year  = structured.get("targetYear", int(year) if year else 2030)
+                cur       = structured.get("currency", "$B")
+                headers   = ["Год", f"Пессимист. ({cur})", f"Базовый ({cur})", f"Оптимист. ({cur})"]
+                for ci, h in enumerate(headers, 1):
+                    ws.cell(row=1, column=ci, value=h)
+                style_header(ws, 4)
+                for i, yr in enumerate(range(base_year, int(tgt_year)+1)):
+                    ri = i + 2
+                    p = round(base_size*(1+sc.get("pessimistic",{}).get("cagr",0)/100)**i, 1)
+                    b = round(base_size*(1+sc.get("base",{}).get("cagr",0)/100)**i, 1)
+                    o = round(base_size*(1+sc.get("optimistic",{}).get("cagr",0)/100)**i, 1)
+                    for ci, v in enumerate([yr, p, b, o], 1):
+                        ws.cell(row=ri, column=ci, value=v)
+                    style_row(ws, ri, 4, alt=(i%2==0))
+                # Scenario summary
+                ws.append([])
+                ws.append(["Сценарий", "CAGR", f"Итог {tgt_year}"])
+                for key, label in [("pessimistic","Пессимист."),("base","Базовый"),("optimistic","Оптимист.")]:
+                    s = sc.get(key, {})
+                    ws.append([label, f"{s.get('cagr','')}%", s.get("finalSize","")])
+                for col in ["A","B","C","D"]:
+                    ws.column_dimensions[col].width = 18
+                ws.freeze_panes = "A2"
+
+            elif stype == "problems" and structured.get("data"):
+                ws = wb.create_sheet("Проблемы отрасли")
+                headers = ["Категория", "Проблема", "Описание", "Частота", "Источники"]
+                for ci, h in enumerate(headers, 1):
+                    ws.cell(row=1, column=ci, value=h)
+                style_header(ws, len(headers))
+                for ri, p in enumerate(structured["data"], 2):
+                    vals = [p.get("category",""), p.get("title",""), p.get("description",""),
+                            p.get("frequency",""), ", ".join(p.get("sources",[]))]
+                    for ci, v in enumerate(vals, 1):
+                        ws.cell(row=ri, column=ci, value=v)
+                    style_row(ws, ri, len(headers), alt=(ri%2==0))
+                ws.column_dimensions["A"].width = 18
+                ws.column_dimensions["B"].width = 22
+                ws.column_dimensions["C"].width = 52
+                ws.column_dimensions["D"].width = 10
+                ws.column_dimensions["E"].width = 30
+                ws.freeze_panes = "A2"
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        safe_name = re.sub(r"[^\w]", "_", market)[:40]
+        return send_file(buf,
+                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                         as_attachment=True,
+                         download_name=f"market_research_{safe_name}.xlsx")
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+
 @app.route("/export-pdf", methods=["POST"])
 def export_pdf():
     try:
