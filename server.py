@@ -1,5 +1,4 @@
-import os
-"""
+import os"""
 server.py — Market Research веб-сервер
 pip install flask httpx reportlab python-docx matplotlib
 python server.py  →  http://localhost:5000
@@ -145,14 +144,7 @@ input::placeholder{color:#c0c4cc}
         <input id="market" type="text" placeholder="например: рынок электромобилей в России">
       </div>
     </div>
-    <div class="form-grid fg-3">
-      <div class="form-group">
-        <label>TAM — объём рынка</label>
-        <div class="tam-wrap">
-          <input id="tam" type="number" placeholder="45" min="0" step="0.1">
-          <select id="tamCur"><option value="$B">$B</option><option value="руб. млрд">руб. млрд</option></select>
-        </div>
-      </div>
+    <div class="form-grid fg-2">
       <div class="form-group">
         <label>Год прогноза</label>
         <input id="year" type="number" value="2030" min="2025" max="2045">
@@ -345,17 +337,15 @@ async function startFlow() {
   const market = document.getElementById('market').value.trim();
   if (!market) { alert('Укажи рынок для исследования'); return; }
 
-  const tam     = document.getElementById('tam').value.trim();
-  const tamCur  = document.getElementById('tamCur').value;
   const year    = document.getElementById('year').value || '2030';
   const geo     = document.getElementById('geo').value;
   const b2x     = document.getElementById('b2x').value;
   const segment = document.getElementById('segment').value.trim();
-  const tamLabel= tam ? `${tam} ${tamCur}` : '';
+  const cur     = /Россия|СНГ/.test(geo) ? 'руб. млрд' : '$B';
   const segLabel= segment ? `, сегмент: ${segment}` : '';
-  const context = `${market} (${geo}${segLabel}, ${b2x}${tamLabel?', TAM '+tamLabel:''})`;
+  const context = `${market} (${geo}${segLabel}, ${b2x})`;
 
-  researchMeta = { market, tam, tamCur, year, geo, b2x, segment, context };
+  researchMeta = { market, year, geo, b2x, segment, cur, context };
   clarifications = [];
   currentQIdx = 0;
   questionQueue = [];
@@ -399,9 +389,7 @@ async function runResearch() {
   document.getElementById('progressCard').style.display = 'block';
   for (let i=0;i<5;i++) setStep(i,'');
 
-  const { market, tam, tamCur, year, geo, b2x, context } = researchMeta;
-  const cur = tamCur;
-  const tamLabel = tam ? `TAM: ${tam} ${cur}` : '';
+  const { market, year, geo, b2x, cur, context } = researchMeta;
   const clarCtx = clarifications
     .filter(c => c.a !== 'пропущено')
     .map(c => `- ${c.q}: ${c.a}`)
@@ -411,7 +399,7 @@ async function runResearch() {
   const prompts = [
     // Step 1 — Market size (plain text ok)
     `Проведи анализ объёма рынка: ${context}.${extra}
-${tamLabel ? `Пользователь указал ${tamLabel}. Подтверди или скорректируй с источниками.` : 'Определи TAM и SAM с источниками и годом данных.'}
+Определи TAM и SAM рынка с источниками и годом данных.
 ## Текущий объём рынка
 TAM, SAM, диапазон оценок. Валюта: ${cur}.
 ## Confidence Level
@@ -439,7 +427,7 @@ High / Medium / Low — обоснуй.
 
 ОБЯЗАТЕЛЬНО в конце добавь JSON-блок строго в этом формате:
 \`\`\`json
-{"type":"growth","baseYear":2024,"targetYear":${year},"baseSize":${tam||50},"currency":"${cur}","scenarios":{"pessimistic":{"cagr":5,"finalSize":0},"base":{"cagr":10,"finalSize":0},"optimistic":{"cagr":18,"finalSize":0}},"drivers":["драйвер1","драйвер2","драйвер3"]}
+{"type":"growth","baseYear":2024,"targetYear":${year},"baseSize":0,"currency":"${cur}","scenarios":{"pessimistic":{"cagr":5,"finalSize":0},"base":{"cagr":10,"finalSize":0},"optimistic":{"cagr":18,"finalSize":0}},"drivers":["драйвер1","драйвер2","драйвер3"]}
 \`\`\`
 Заполни finalSize реальными числами из расчёта.`,
 
@@ -821,8 +809,7 @@ def export_pdf():
         geo     = meta.get("geo", "")
         year    = meta.get("year", "")
         b2x     = meta.get("b2x", "")
-        tam     = meta.get("tam", "")
-        tamCur  = meta.get("tamCur", "")
+        tamCur  = "руб. млрд" if meta.get("geo","") in ("Россия","СНГ") else "$B"
 
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=A4,
@@ -861,7 +848,6 @@ def export_pdf():
         meta_items = []
         if geo:  meta_items.append(f"<b>География:</b> {geo}")
         if b2x:  meta_items.append(f"<b>Тип рынка:</b> {b2x}")
-        if tam:  meta_items.append(f"<b>TAM:</b> {tam} {tamCur}")
         if year: meta_items.append(f"<b>Прогноз до:</b> {year}")
         meta_items.append(f"<b>Дата:</b> {datetime.now().strftime('%d.%m.%Y')}")
         for m in meta_items:
@@ -923,7 +909,7 @@ def export_pdf():
                     # Scenario summary table
                     sc = structured.get("scenarios", {})
                     ty = structured.get("targetYear", year)
-                    cur_label = structured.get("currency", tamCur)
+                    cur_label = structured.get("currency", tamCur if tamCur else "$B")
                     tbl_data = [["Сценарий", "CAGR", f"Итог {ty} ({cur_label})"],
                                 ["Пессимистичный", f"{sc.get('pessimistic',{}).get('cagr','')}%", f"{sc.get('pessimistic',{}).get('finalSize','')}"],
                                 ["Базовый",        f"{sc.get('base',{}).get('cagr','')}%",        f"{sc.get('base',{}).get('finalSize','')}"],
@@ -1043,8 +1029,7 @@ def export_word():
         geo    = meta.get("geo", "")
         year   = meta.get("year", "")
         b2x    = meta.get("b2x", "")
-        tam    = meta.get("tam", "")
-        tamCur = meta.get("tamCur", "")
+        tamCur = "руб. млрд" if meta.get("geo","") in ("Россия","СНГ") else "$B"
 
         doc = DocxDocument()
         for sec in doc.sections:
@@ -1082,7 +1067,6 @@ def export_word():
         rows = []
         if geo:  rows.append(("География", geo))
         if b2x:  rows.append(("Тип рынка", b2x))
-        if tam:  rows.append(("TAM", f"{tam} {tamCur}"))
         if year: rows.append(("Прогноз до", year))
         rows.append(("Дата", datetime.now().strftime("%d.%m.%Y")))
         real_cl = [c for c in clarifications if c.get('a') != 'пропущено']
