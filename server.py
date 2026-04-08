@@ -1,3 +1,4 @@
+import os
 """
 server.py — локальный веб-сервер для Market Research
 Запуск:
