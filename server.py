@@ -1,4 +1,4 @@
-import os"""
+"""
 server.py — Market Research веб-сервер
 pip install flask httpx reportlab python-docx matplotlib
 python server.py  →  http://localhost:5000
