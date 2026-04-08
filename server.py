@@ -63,19 +63,13 @@ def register_pdf_fonts():
                     break
                 except Exception:
                     continue
-    # If Bold not available, alias it to regular so PDF doesn't crash
+    # Always alias Bold to Regular to avoid crash if Bold ttf missing
     try:
-        from reportlab.pdfbase.pdfmetrics import getFont
-        getFont("DejaVuSans-Bold")
+        pdfmetrics.registerFontFamily("DejaVuSans",
+            normal="DejaVuSans", bold="DejaVuSans",
+            italic="DejaVuSans", boldItalic="DejaVuSans")
     except Exception:
-        try:
-            from reportlab.pdfbase.pdfmetrics import getFont
-            getFont("DejaVuSans")
-            pdfmetrics.registerFontFamily("DejaVuSans",
-                normal="DejaVuSans", bold="DejaVuSans",
-                italic="DejaVuSans", boldItalic="DejaVuSans")
-        except Exception:
-            pass
+        pass
     _fonts_registered = True
 
 SYS = """Ты — эксперт по маркетинговым исследованиям. Отвечай на русском языке.
@@ -857,7 +851,7 @@ async function exportFile(type) {
     const a    = document.createElement('a');
     a.href=url;
     const safe=(researchMeta.market||'research').replace(/[^a-zA-Z\u0400-\u04FF0-9]/g,'_').slice(0,40);
-    a.download=`market_research_${safe}.${type==='pdf'?'pdf':'docx'}`;
+    a.download=`market_research_${safe}.${type==='pdf'?'pdf':type==='excel'?'xlsx':'docx'}`;
     a.click(); URL.revokeObjectURL(url);
   } catch(e) { alert('Ошибка экспорта: '+e.message); }
   finally { if(btn){ btn.disabled=false; btn.innerHTML=orig; } }
@@ -1118,7 +1112,7 @@ def export_pdf():
 
         register_pdf_fonts()
         NRM  = "DejaVuSans"
-        BLD  = "DejaVuSans-Bold"
+        BLD  = "DejaVuSans"   # alias — Bold TTF may not be available on server
 
         payload        = request.json
         results        = payload.get("results", [])
