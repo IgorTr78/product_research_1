@@ -4,7 +4,7 @@ pip install flask httpx reportlab python-docx matplotlib
 python server.py  →  http://localhost:5000
 """
 
-import os, asyncio, io, re, json, base64
+import os, asyncio, io, re, json, base64, urllib.request
 from datetime import datetime
 import httpx
 from flask import Flask, request, jsonify, send_file
@@ -13,10 +13,51 @@ app = Flask(__name__)
 
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "")
 PERPLEXITY_URL     = "https://api.perplexity.ai/chat/completions"
+AUTHOR             = "Создано Treyner Igor, e-mail: i.treyner@yandex.ru"
+
+# ---------------------------------------------------------------------------
+# DejaVu fonts for PDF Cyrillic support
+# ---------------------------------------------------------------------------
+FONT_DIR  = "/tmp/mr_fonts"
+FONT_URLS = {
+    "DejaVuSans":      "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf",
+    "DejaVuSans-Bold": "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf",
+}
+
+def ensure_fonts():
+    os.makedirs(FONT_DIR, exist_ok=True)
+    for name, url in FONT_URLS.items():
+        path = f"{FONT_DIR}/{name}.ttf"
+        if not os.path.exists(path):
+            try:
+                urllib.request.urlretrieve(url, path)
+            except Exception as e:
+                print(f"Font download failed ({name}): {e}")
+
+def register_pdf_fonts():
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    ensure_fonts()
+    pairs = {
+        "DejaVuSans":      [f"{FONT_DIR}/DejaVuSans.ttf",
+                            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
+        "DejaVuSans-Bold": [f"{FONT_DIR}/DejaVuSans-Bold.ttf",
+                            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"],
+    }
+    for name, paths in pairs.items():
+        for p in paths:
+            if os.path.exists(p):
+                pdfmetrics.registerFont(TTFont(name, p))
+                break
 
 SYS = """Ты — эксперт по маркетинговым исследованиям. Отвечай на русском языке.
 Для российских рынков используй рубли (руб. млрд), для остальных — доллары ($B).
-Всегда приводи конкретные цифры, источники и год данных."""
+
+ТРЕБОВАНИЯ К ДАННЫМ:
+- Используй актуальные данные на дату запроса. Не придумывай — если свежих данных нет, укажи последние проверенные с годом.
+- Приоритет источников: национальные официальные (Росстат, ЦБ РФ, отраслевые ассоциации для России; Eurostat, нац. статведомства для Европы; Census Bureau, BLS для США).
+- Второй приоритет: авторитетные международные (McKinsey, Gartner, IDC, Statista, Bloomberg).
+- В конце каждого раздела указывай список источников: [1] Название, год, ссылка."""
 
 # ---------------------------------------------------------------------------
 # HTML
@@ -131,7 +172,7 @@ input::placeholder{color:#c0c4cc}
     <div class="logo">MR</div>
     <div class="header-text">
       <h1>Market Research</h1>
-      <p>Powered by Perplexity sonar-pro</p>
+      <p>Создано Treyner Igor &nbsp;·&nbsp; i.treyner@yandex.ru</p>
     </div>
   </div>
 
@@ -796,20 +837,24 @@ def export_pdf():
         from reportlab.lib.units import cm
         from reportlab.lib import colors
         from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                        HRFlowable, Table, TableStyle, Image, KeepTogether)
+                                        HRFlowable, Table, TableStyle, Image)
         from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 
-        payload       = request.json
-        results       = payload.get("results", [])
-        meta          = payload.get("meta", {})
-        clarifications= payload.get("clarifications", [])
-        chart_img_b64 = payload.get("chartImg")
+        register_pdf_fonts()
+        NRM  = "DejaVuSans"
+        BLD  = "DejaVuSans-Bold"
 
-        market  = meta.get("market", "Исследование рынка")
-        geo     = meta.get("geo", "")
-        year    = meta.get("year", "")
-        b2x     = meta.get("b2x", "")
-        tamCur  = "руб. млрд" if meta.get("geo","") in ("Россия","СНГ") else "$B"
+        payload        = request.json
+        results        = payload.get("results", [])
+        meta           = payload.get("meta", {})
+        clarifications = payload.get("clarifications", [])
+        chart_img_b64  = payload.get("chartImg")
+
+        market = meta.get("market", "Исследование рынка")
+        geo    = meta.get("geo", "")
+        year   = meta.get("year", "")
+        b2x    = meta.get("b2x", "")
+        tamCur = "руб. млрд" if meta.get("geo","") in ("Россия","СНГ") else "$B"
 
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=A4,
@@ -820,51 +865,71 @@ def export_pdf():
         GREEN  = colors.HexColor("#1D9E75")
         DARK   = colors.HexColor("#111111")
         GRAY   = colors.HexColor("#666666")
-        LGRAY  = colors.HexColor("#f8fafc")
-        BORDER = colors.HexColor("#e0e4ea")
-        AMBER  = colors.HexColor("#f59e0b")
-        BLUE   = colors.HexColor("#3b82f6")
+        LGRAY  = colors.HexColor("#f4f6f9")
+        HGRAY  = colors.HexColor("#e8ecf0")
+        BORDER = colors.HexColor("#d0d5dd")
+        WHITE  = colors.white
 
         def ps(name, **kw): return ParagraphStyle(name, **kw)
-        st_title  = ps("T",  fontSize=24, leading=30, textColor=DARK,  fontName="Helvetica-Bold", spaceAfter=4)
-        st_market = ps("Mk", fontSize=17, leading=24, textColor=GREEN, fontName="Helvetica-Bold", spaceAfter=14)
-        st_meta   = ps("Me", fontSize=10, leading=14, textColor=GRAY,  fontName="Helvetica",      spaceAfter=3)
-        st_h1     = ps("H1", fontSize=14, leading=20, textColor=GREEN, fontName="Helvetica-Bold", spaceBefore=18, spaceAfter=6)
-        st_h2     = ps("H2", fontSize=12, leading=16, textColor=DARK,  fontName="Helvetica-Bold", spaceBefore=10, spaceAfter=4)
-        st_h3     = ps("H3", fontSize=11, leading=15, textColor=DARK,  fontName="Helvetica-Bold", spaceBefore=6,  spaceAfter=3)
+        st_title  = ps("T",  fontSize=22, leading=28, textColor=DARK,  fontName=BLD, spaceAfter=4)
+        st_market = ps("Mk", fontSize=16, leading=22, textColor=GREEN, fontName=BLD, spaceAfter=12)
+        st_meta   = ps("Me", fontSize=10, leading=14, textColor=GRAY,  fontName=NRM, spaceAfter=3)
+        st_h1     = ps("H1", fontSize=14, leading=20, textColor=GREEN, fontName=BLD, spaceBefore=18, spaceAfter=6)
+        st_h2     = ps("H2", fontSize=12, leading=16, textColor=DARK,  fontName=BLD, spaceBefore=10, spaceAfter=4)
+        st_h3     = ps("H3", fontSize=11, leading=15, textColor=DARK,  fontName=BLD, spaceBefore=6,  spaceAfter=3)
         st_body   = ps("B",  fontSize=10, leading=15, textColor=colors.HexColor("#333"),
-                        fontName="Helvetica", spaceAfter=3, alignment=TA_JUSTIFY)
+                        fontName=NRM, spaceAfter=3, alignment=TA_JUSTIFY)
         st_bullet = ps("Bu", fontSize=10, leading=15, textColor=colors.HexColor("#333"),
-                        fontName="Helvetica", spaceAfter=2, leftIndent=14)
-        st_foot   = ps("F",  fontSize=8, leading=12, textColor=GRAY, fontName="Helvetica", alignment=TA_CENTER)
-        st_clabel = ps("CL", fontSize=9, leading=13, textColor=GRAY, fontName="Helvetica-Oblique", spaceAfter=2)
+                        fontName=NRM, spaceAfter=2, leftIndent=14)
+        st_foot   = ps("F",  fontSize=8,  leading=12, textColor=GRAY, fontName=NRM, alignment=TA_CENTER)
+        st_clabel = ps("CL", fontSize=9,  leading=13, textColor=GRAY, fontName=NRM, spaceAfter=2)
+        st_th     = ps("TH", fontSize=9,  leading=12, textColor=WHITE, fontName=BLD)
+        st_td     = ps("TD", fontSize=9,  leading=12, textColor=DARK,  fontName=NRM)
+
+        def cell(text, style):
+            return Paragraph(str(text), style)
+
+        BASE_TBL_STYLE = [
+            ("BACKGROUND",   (0,0), (-1,0),  GREEN),
+            ("TEXTCOLOR",    (0,0), (-1,0),  WHITE),
+            ("FONTNAME",     (0,0), (-1,0),  BLD),
+            ("FONTSIZE",     (0,0), (-1,0),  9),
+            ("FONTNAME",     (0,1), (-1,-1), NRM),
+            ("FONTSIZE",     (0,1), (-1,-1), 9),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1), [WHITE, LGRAY]),
+            ("GRID",         (0,0), (-1,-1), 0.5, BORDER),
+            ("TOPPADDING",   (0,0), (-1,-1), 5),
+            ("BOTTOMPADDING",(0,0), (-1,-1), 5),
+            ("LEFTPADDING",  (0,0), (-1,-1), 7),
+            ("RIGHTPADDING", (0,0), (-1,-1), 7),
+            ("VALIGN",       (0,0), (-1,-1), "TOP"),
+            ("LINEBELOW",    (0,0), (-1,0),  1.5, GREEN),
+        ]
 
         story = []
 
-        # ── Cover ──
+        # Cover
         story.append(Paragraph("Market Research", st_title))
         story.append(Paragraph(market, st_market))
-
         meta_items = []
-        if geo:  meta_items.append(f"<b>География:</b> {geo}")
-        if b2x:  meta_items.append(f"<b>Тип рынка:</b> {b2x}")
-        if year: meta_items.append(f"<b>Прогноз до:</b> {year}")
-        meta_items.append(f"<b>Дата:</b> {datetime.now().strftime('%d.%m.%Y')}")
+        if geo:  meta_items.append(f"География: {geo}")
+        if b2x:  meta_items.append(f"Тип рынка: {b2x}")
+        if year: meta_items.append(f"Прогноз до: {year}")
+        meta_items.append(f"Дата: {datetime.now().strftime('%d.%m.%Y')}")
         for m in meta_items:
             story.append(Paragraph(m, st_meta))
 
-        # Clarifications
-        real_cl = [c for c in clarifications if c.get('a') != 'пропущено']
+        real_cl = [c for c in clarifications if c.get("a") != "пропущено"]
         if real_cl:
             story.append(Spacer(1, 6))
-            story.append(Paragraph("<b>Уточнения:</b>", st_meta))
+            story.append(Paragraph("Уточнения:", st_meta))
             for c in real_cl:
-                story.append(Paragraph(f"• {c['q']}: <i>{c['a']}</i>", st_clabel))
+                story.append(Paragraph(f"• {c['q']}: {c['a']}", st_clabel))
 
         story.append(Spacer(1, 12))
         story.append(HRFlowable(width="100%", thickness=2, color=GREEN, spaceAfter=20))
 
-        # ── Sections ──
+        # Sections
         for idx, section in enumerate(results):
             title      = section.get("title", f"Раздел {idx+1}")
             content    = section.get("content", "")
@@ -873,128 +938,90 @@ def export_pdf():
             story.append(Paragraph(f"{idx+1}. {title}", st_h1))
             story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceAfter=8))
 
-            # Structured tables
             if structured:
                 stype = structured.get("type")
 
                 if stype == "competitors" and structured.get("data"):
-                    data_rows = structured["data"]
-                    tbl_data = [["#", "Компания", "Доля", "Сегмент", "Регион", "Преимущество"]]
-                    for r in data_rows:
+                    rows = structured["data"]
+                    tbl_data = [[cell(h, st_th) for h in ["#","Компания","Доля","Сегмент","Регион","Преимущество"]]]
+                    for r in rows:
                         tbl_data.append([
-                            str(r.get("rank","")),
-                            r.get("company",""),
-                            f"{r.get('share','')}%",
-                            r.get("segment",""),
-                            r.get("region",""),
-                            r.get("note","")
+                            cell(str(r.get("rank","")),    st_td),
+                            cell(r.get("company",""),      st_td),
+                            cell(f"{r.get('share','')}%",  st_td),
+                            cell(r.get("segment",""),      st_td),
+                            cell(r.get("region",""),       st_td),
+                            cell(r.get("note",""),         st_td),
                         ])
-                    col_w = [0.8*cm, 3.5*cm, 1.6*cm, 3*cm, 2.5*cm, 4.6*cm]
-                    tbl = Table(tbl_data, colWidths=col_w)
-                    tbl.setStyle(TableStyle([
-                        ("BACKGROUND", (0,0), (-1,0), GREEN),
-                        ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
-                        ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
-                        ("FONTSIZE",   (0,0), (-1,0), 9),
-                        ("FONTSIZE",   (0,1), (-1,-1), 8),
-                        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, LGRAY]),
-                        ("GRID",       (0,0), (-1,-1), 0.4, BORDER),
-                        ("PADDING",    (0,0), (-1,-1), 4),
-                        ("VALIGN",     (0,0), (-1,-1), "TOP"),
-                    ]))
+                    tbl = Table(tbl_data, colWidths=[0.7*cm, 3.5*cm, 1.5*cm, 2.8*cm, 2.3*cm, 4.7*cm],
+                                repeatRows=1)
+                    tbl.setStyle(TableStyle(BASE_TBL_STYLE))
                     story.append(tbl)
                     story.append(Spacer(1, 10))
 
                 elif stype == "growth":
-                    # Scenario summary table
-                    sc = structured.get("scenarios", {})
-                    ty = structured.get("targetYear", year)
-                    cur_label = structured.get("currency", tamCur if tamCur else "$B")
-                    tbl_data = [["Сценарий", "CAGR", f"Итог {ty} ({cur_label})"],
-                                ["Пессимистичный", f"{sc.get('pessimistic',{}).get('cagr','')}%", f"{sc.get('pessimistic',{}).get('finalSize','')}"],
-                                ["Базовый",        f"{sc.get('base',{}).get('cagr','')}%",        f"{sc.get('base',{}).get('finalSize','')}"],
-                                ["Оптимистичный",  f"{sc.get('optimistic',{}).get('cagr','')}%",  f"{sc.get('optimistic',{}).get('finalSize','')}"],]
-                    tbl = Table(tbl_data, colWidths=[5*cm, 3*cm, 6*cm])
-                    tbl.setStyle(TableStyle([
-                        ("BACKGROUND", (0,0), (-1,0), GREEN),
-                        ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
-                        ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
-                        ("FONTSIZE",   (0,0), (-1,-1), 9),
-                        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, LGRAY]),
-                        ("GRID",       (0,0), (-1,-1), 0.4, BORDER),
-                        ("PADDING",    (0,0), (-1,-1), 5),
-                    ]))
+                    sc  = structured.get("scenarios", {})
+                    ty  = structured.get("targetYear", year)
+                    cur = structured.get("currency", tamCur)
+                    tbl_data = [[cell(h, st_th) for h in ["Сценарий", "CAGR", f"Итог {ty} ({cur})"]]]
+                    for label, key in [("Пессимистичный","pessimistic"),("Базовый","base"),("Оптимистичный","optimistic")]:
+                        s = sc.get(key, {})
+                        tbl_data.append([cell(label, st_td), cell(f"{s.get('cagr','')}%", st_td),
+                                         cell(str(s.get("finalSize","")), st_td)])
+                    tbl = Table(tbl_data, colWidths=[5*cm, 3*cm, 7.5*cm], repeatRows=1)
+                    tbl.setStyle(TableStyle(BASE_TBL_STYLE))
                     story.append(tbl)
                     story.append(Spacer(1, 8))
 
-                    # Embed chart image if provided
                     if chart_img_b64 and idx == 2:
                         try:
                             img_data = base64.b64decode(chart_img_b64.split(",")[-1])
-                            img_buf  = io.BytesIO(img_data)
-                            img      = Image(img_buf, width=15*cm, height=6*cm)
-                            story.append(img)
+                            story.append(Image(io.BytesIO(img_data), width=15*cm, height=6*cm))
                             story.append(Spacer(1, 8))
                         except Exception:
                             pass
 
                     drivers = structured.get("drivers", [])
                     if drivers:
-                        story.append(Paragraph("<b>Драйверы роста:</b> " + " · ".join(drivers), st_body))
+                        story.append(Paragraph("Драйверы роста: " + " · ".join(drivers), st_body))
                     story.append(Spacer(1, 6))
 
                 elif stype == "problems" and structured.get("data"):
-                    data_rows = structured["data"]
-                    tbl_data = [["Категория", "Проблема", "Описание", "Частота"]]
-                    for p in data_rows:
+                    rows = structured["data"]
+                    tbl_data = [[cell(h, st_th) for h in ["Категория","Проблема","Описание","Частота"]]]
+                    for p in rows:
                         tbl_data.append([
-                            p.get("category",""),
-                            p.get("title",""),
-                            p.get("description",""),
-                            p.get("frequency",""),
+                            cell(p.get("category",""),    st_td),
+                            cell(p.get("title",""),       st_td),
+                            cell(p.get("description",""), st_td),
+                            cell(p.get("frequency",""),   st_td),
                         ])
-                    tbl = Table(tbl_data, colWidths=[3*cm, 3.5*cm, 7*cm, 1.8*cm])
-                    freq_colors = {"High": colors.HexColor("#fef3c7"),
-                                   "Medium": colors.HexColor("#e0f2fe"),
-                                   "Low": colors.HexColor("#f0fdf4")}
-                    style = [
-                        ("BACKGROUND", (0,0), (-1,0), GREEN),
-                        ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
-                        ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
-                        ("FONTSIZE",   (0,0), (-1,-1), 8),
-                        ("GRID",       (0,0), (-1,-1), 0.4, BORDER),
-                        ("PADDING",    (0,0), (-1,-1), 4),
-                        ("VALIGN",     (0,0), (-1,-1), "TOP"),
-                        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, LGRAY]),
-                    ]
-                    tbl.setStyle(TableStyle(style))
+                    tbl = Table(tbl_data, colWidths=[2.8*cm, 3.2*cm, 7.5*cm, 2*cm], repeatRows=1)
+                    tbl.setStyle(TableStyle(BASE_TBL_STYLE))
                     story.append(tbl)
                     story.append(Spacer(1, 10))
 
+
             # Plain text
-            plain = re.sub(r"```json\n[\s\S]*?\n```", "", content).strip()
+            plain = re.sub(r"```json[\s\S]*?```", "", content).strip()
             for line in plain.split("\n"):
                 line = line.rstrip()
                 if not line:
                     story.append(Spacer(1, 4)); continue
-                safe = re.sub(r"&", "&amp;", line)
-                safe = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", safe)
-                safe = re.sub(r"\*(.*?)\*",     r"<i>\1</i>", safe)
+                clean = re.sub(r"\*\*|\*", "", line)
                 if line.startswith("## "):
-                    story.append(Paragraph(re.sub(r"\*\*|\*","",line[3:]), st_h2))
+                    story.append(Paragraph(clean[3:], st_h2))
                 elif line.startswith("### "):
-                    story.append(Paragraph(re.sub(r"\*\*|\*","",line[4:]), st_h3))
+                    story.append(Paragraph(clean[4:], st_h3))
                 elif line.startswith("- ") or line.startswith("* "):
-                    bt = re.sub(r"\*\*(.*?)\*\*",r"<b>\1</b>", re.sub(r"&","&amp;",line[2:]))
-                    story.append(Paragraph(f"&#8226; {bt}", st_bullet))
+                    story.append(Paragraph("• " + clean[2:], st_bullet))
                 else:
-                    try:    story.append(Paragraph(safe, st_body))
-                    except: story.append(Paragraph(re.sub(r"<.*?>","",safe), st_body))
+                    story.append(Paragraph(clean, st_body))
             story.append(Spacer(1, 8))
 
         story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceBefore=14, spaceAfter=6))
         story.append(Paragraph(
-            f"Market Research Tool &middot; Perplexity sonar-pro &middot; {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            f"Treyner Igor · i.treyner@yandex.ru · {datetime.now().strftime('%d.%m.%Y %H:%M')}",
             st_foot))
 
         doc.build(story)
@@ -1007,9 +1034,6 @@ def export_pdf():
         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 
-# ---------------------------------------------------------------------------
-# Word export
-# ---------------------------------------------------------------------------
 @app.route("/export-word", methods=["POST"])
 def export_word():
     try:
@@ -1189,7 +1213,7 @@ def export_word():
 
         hr("e0e4ea", 4)
         fp = doc.add_paragraph()
-        r = fp.add_run(f"Market Research Tool · Perplexity sonar-pro · {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+        r = fp.add_run(f"Treyner Igor · i.treyner@yandex.ru · {datetime.now().strftime('%d.%m.%Y %H:%M')}")
         r.font.size=Pt(8); r.font.color.rgb=GRAY
         fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
