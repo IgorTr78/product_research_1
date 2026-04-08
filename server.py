@@ -18,42 +18,28 @@ AUTHOR             = "Создано Treyner Igor, e-mail: i.treyner@yandex.ru"
 # ---------------------------------------------------------------------------
 # DejaVu fonts for PDF Cyrillic support
 # ---------------------------------------------------------------------------
-FONT_DIR  = "/tmp/mr_fonts"
-FONT_URLS = {
-    "DejaVuSans":      "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf",
-    "DejaVuSans-Bold": "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf",
-}
-SYSTEM_FONT_PATHS = {
-    "DejaVuSans":      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "DejaVuSans-Bold": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+# Font search paths — apt.txt installs fonts-dejavu-core on Railway
+_FONT_PATHS = {
+    "DejaVuSans": [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",          # Railway (after apt.txt)
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",                       # Arch-based
+        "/usr/local/share/fonts/DejaVuSans.ttf",                     # macOS/custom
+    ],
+    "DejaVuSans-Bold": [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        "/usr/local/share/fonts/DejaVuSans-Bold.ttf",
+    ],
 }
 
-def ensure_fonts():
-    """Download fonts at startup. Called once via app startup hook."""
-    os.makedirs(FONT_DIR, exist_ok=True)
-    for name, url in FONT_URLS.items():
-        dest = f"{FONT_DIR}/{name}.ttf"
-        if os.path.exists(dest):
-            continue
-        # Try system path first (saves bandwidth)
-        sys_path = SYSTEM_FONT_PATHS.get(name, "")
-        if os.path.exists(sys_path):
-            import shutil
-            shutil.copy2(sys_path, dest)
-            print(f"Font copied from system: {name}")
-            continue
-        # Download
-        try:
-            urllib.request.urlretrieve(url, dest)
-            print(f"Font downloaded: {name}")
-        except Exception as e:
-            print(f"Font download failed ({name}): {e}")
-
-# Pre-download fonts at module load time (runs once when Railway starts the app)
+# Also check matplotlib bundled fonts (available if matplotlib installed)
 try:
-    ensure_fonts()
-except Exception as _fe:
-    print(f"Startup font init failed: {_fe}")
+    import matplotlib as _mpl
+    _mpl_fonts = os.path.join(os.path.dirname(_mpl.__file__), "mpl-data", "fonts", "ttf")
+    _FONT_PATHS["DejaVuSans"].append(os.path.join(_mpl_fonts, "DejaVuSans.ttf"))
+    _FONT_PATHS["DejaVuSans-Bold"].append(os.path.join(_mpl_fonts, "DejaVuSans-Bold.ttf"))
+except Exception:
+    pass
 
 _fonts_registered = False
 
@@ -63,32 +49,22 @@ def register_pdf_fonts():
         return
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    # Candidates: local fonts/ dir in repo, /tmp download, system
-    pairs = {
-        "DejaVuSans": [
-            os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf"),
-            f"{FONT_DIR}/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ],
-        "DejaVuSans-Bold": [
-            os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans-Bold.ttf"),
-            f"{FONT_DIR}/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        ],
-    }
-    for name, paths in pairs.items():
+
+    for name, paths in _FONT_PATHS.items():
         for p in paths:
-            if os.path.exists(p):
+            if p and os.path.exists(p) and os.path.getsize(p) > 10000:
                 try:
                     pdfmetrics.registerFont(TTFont(name, p))
+                    print(f"PDF font OK: {name} <- {p}")
                     break
-                except Exception:
-                    continue
-    # Always alias Bold to Regular to avoid crash if Bold ttf missing
+                except Exception as fe:
+                    print(f"PDF font FAIL: {name} <- {p}: {fe}")
     try:
-        pdfmetrics.registerFontFamily("DejaVuSans",
-            normal="DejaVuSans", bold="DejaVuSans",
-            italic="DejaVuSans", boldItalic="DejaVuSans")
+        pdfmetrics.registerFontFamily(
+            "DejaVuSans",
+            normal="DejaVuSans", bold="DejaVuSans-Bold",
+            italic="DejaVuSans", boldItalic="DejaVuSans-Bold",
+        )
     except Exception:
         pass
     _fonts_registered = True
@@ -1224,6 +1200,7 @@ def export_pdf():
         story.append(HRFlowable(width="100%", thickness=2, color=GREEN, spaceAfter=20))
 
         # Sections
+        all_sources = {}  # idx -> {title, refs}
         for idx, section in enumerate(results):
             title      = section.get("title", f"Раздел {idx+1}")
             content    = section.get("content", "")
@@ -1296,13 +1273,29 @@ def export_pdf():
                     story.append(Spacer(1, 10))
 
 
-            # Plain text
+            # Plain text — sources collected and moved to bottom
             plain = re.sub(r"```json[\s\S]*?```", "", content).strip()
+            in_src = False
             for line in plain.split("\n"):
                 line = line.rstrip()
                 if not line:
-                    story.append(Spacer(1, 4)); continue
+                    if not in_src: story.append(Spacer(1, 4))
+                    continue
                 clean = re.sub(r"\*\*|\*", "", line)
+                # Detect "Источники" / "Sources" heading
+                if re.match(r"^#*\s*(Источники|Sources|Литература|References)", clean, re.I):
+                    in_src = True
+                    all_sources.setdefault(idx, {"title": title, "refs": []})
+                    continue
+                if in_src:
+                    # New heading ends sources block
+                    if re.match(r"^#{1,3}\s", line):
+                        in_src = False
+                    else:
+                        ref = re.sub(r"^[-•\[\d\]]+\s*", "", clean).strip()
+                        if ref:
+                            all_sources.setdefault(idx, {"title": title, "refs": []})["refs"].append(ref)
+                        continue
                 if line.startswith("## "):
                     story.append(Paragraph(clean[3:], st_h2))
                 elif line.startswith("### "):
@@ -1312,6 +1305,23 @@ def export_pdf():
                 else:
                     story.append(Paragraph(clean, st_body))
             story.append(Spacer(1, 8))
+
+        # ── Consolidated sources at the bottom ──────────────────────────────
+        if any(v["refs"] for v in all_sources.values()):
+            story.append(HRFlowable(width="100%", thickness=1.5, color=GREEN, spaceBefore=16, spaceAfter=8))
+            story.append(Paragraph("Использованные материалы", st_h1))
+            story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceAfter=10))
+            seen = set(); counter = 1
+            for sec_idx in sorted(all_sources.keys()):
+                info = all_sources[sec_idx]
+                refs = [r for r in info["refs"] if r not in seen]
+                if not refs: continue
+                story.append(Paragraph(f"{sec_idx+1}. {info['title']}", st_h2))
+                for ref in refs:
+                    seen.add(ref)
+                    story.append(Paragraph(f"[{counter}]  {ref}", st_clabel))
+                    counter += 1
+                story.append(Spacer(1, 6))
 
         story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceBefore=14, spaceAfter=6))
         story.append(Paragraph(
